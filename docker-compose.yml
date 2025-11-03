@@ -1,0 +1,104 @@
+version: '3.8'
+
+services:
+  # Base de données TimescaleDB
+  timescaledb:
+    image: timescale/timescaledb:latest-pg14
+    container_name: crypto_timescaledb
+    environment:
+      POSTGRES_USER: crypto_user
+      POSTGRES_PASSWORD: crypto_pass
+      POSTGRES_DB: crypto_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+    networks:
+      - crypto_tracker_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crypto_user -d crypto_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Cache Redis
+  redis:
+    image: redis:7-alpine
+    container_name: crypto_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - crypto_tracker_network
+
+  # Airflow (orchestrateur ETL)
+  airflow:
+    image: apache/airflow:2.7.0
+    container_name: crypto_airflow
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://crypto_user:crypto_pass@timescaledb/crypto_db
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: admin
+      _AIRFLOW_WWW_USER_PASSWORD: admin
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./scripts:/opt/airflow/scripts
+      - airflow_logs:/opt/airflow/logs
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - crypto_tracker_network
+    command: >
+      bash -c "
+        airflow db init &&
+        airflow users create \
+          --username admin \
+          --password admin \
+          --firstname Leila \
+          --lastname Boukhie \
+          --role Admin \
+          --email leila@example.com || true &&
+        airflow scheduler & 
+        airflow webserver
+      "
+
+  # Dashboard Streamlit
+  streamlit:
+      build:
+        context: .
+        dockerfile: Dockerfile.streamlit
+      container_name: crypto_streamlit
+      working_dir: /app
+      ports:
+        - "8501:8501"
+      depends_on:
+        timescaledb:
+          condition: service_healthy
+        redis:
+          condition: service_started
+      environment:
+        TIMESCALE_DB_HOST: timescaledb
+        TIMESCALE_DB_PORT: 5432
+        TIMESCALE_DB_USER: crypto_user
+        TIMESCALE_DB_PASSWORD: crypto_pass
+        TIMESCALE_DB_NAME: crypto_db
+        REDIS_HOST: redis
+        REDIS_PORT: 6379
+      networks:
+        - crypto_tracker_network
+        
+volumes:
+  timescale_data:
+  airflow_logs:
+
+networks:
+  crypto_tracker_network:
