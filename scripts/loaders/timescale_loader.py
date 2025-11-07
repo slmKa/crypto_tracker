@@ -44,17 +44,21 @@ class TimescaleLoader:
 
     @contextmanager
     def get_connection(self):
-        conn = None
         try:
-            conn = psycopg2.connect(self.conn_str)
+            # 🧹 Nettoyer la chaîne de connexion (supprime caractères invalides)
+            conn_str_clean = self.conn_str.encode('latin1', errors='ignore').decode('utf-8', errors='ignore')
+            print("DEBUG: Connexion string brute:", repr(conn_str_clean))
+            # 🪄 Debug : affiche la chaîne nettoyée
+            print("🧩 Connexion string nettoyée :", conn_str_clean)
+            
+            # Connexion à TimescaleDB
+            conn = psycopg2.connect(conn_str_clean)
             yield conn
         except Exception as e:
-            self.logger.error(f"Erreur connexion : {e}")
-            if conn:
-                conn.rollback()
+            logger.error(f"Erreur connexion : {e}")
             raise
         finally:
-            if conn:
+            if 'conn' in locals():
                 conn.close()
 
     # ----------------- Insertion OHLCV -----------------
