@@ -1,0 +1,18 @@
+FROM apache/airflow:2.7.0
+
+USER root
+
+# Installer les dépendances système
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libssl-dev \
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+USER airflow
+
+# Copier le fichier requirements
+COPY requirements-airflow.txt /tmp/requirements-airflow.txt
+
+# Installer les dépendances Python
+RUN pip install --no-cache-dir -r /tmp/requirements-airflow.txt
