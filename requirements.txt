@@ -24,6 +24,7 @@ altair==5.1.2
 # Utils
 python-dotenv==1.0.0
 loguru==0.7.2
+confluent-kafka>=2.3.0
 
 # Dépendances supplémentaires pour éviter les conflits
 werkzeug==2.3.7

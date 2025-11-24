@@ -2,12 +2,21 @@
 Consumer Kafka pour consommer les prix en temps réel
 (Version Confluent Kafka)
 """
-from confluent_kafka import Consumer, KafkaException
+import os
+import sys
 import json
 from datetime import datetime
 from loguru import logger
-import sys
-import os
+from confluent_kafka import Consumer, KafkaException
+
+# === Variables d'environnement pour Docker ===
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+
+TIMESCALE_HOST = os.getenv("TIMESCALE_DB_HOST", "timescaledb")
+TIMESCALE_PORT = int(os.getenv("TIMESCALE_DB_PORT", 5432))
+
+KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "kafka:9092")
 
 # Import des loaders existants
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -25,9 +34,11 @@ class CryptoPriceConsumer:
     4. Publier sur Redis Pub/Sub pour le dashboard
     """
 
-    def __init__(self, kafka_bootstrap_servers='localhost:9093',
-                 group_id='crypto-storage-group'):
+    def __init__(self, kafka_bootstrap_servers=None, group_id='crypto-storage-group'):
         self.logger = logger.bind(component="kafka_consumer")
+
+        if kafka_bootstrap_servers is None:
+            kafka_bootstrap_servers = KAFKA_BOOTSTRAP
 
         # Configuration du consumer Confluent Kafka
         conf = {
@@ -38,8 +49,8 @@ class CryptoPriceConsumer:
         }
 
         self.consumer = Consumer(conf)
-        self.timescale_loader = TimescaleLoader()
-        self.redis_loader = RedisLoader()
+        self.timescale_loader = TimescaleLoader()  # utilise l'host défini dans TimescaleLoader
+        self.redis_loader = RedisLoader(host=REDIS_HOST, port=REDIS_PORT)
 
         self.logger.info("✅ Kafka Consumer initialized (Confluent version)")
 
@@ -54,7 +65,7 @@ class CryptoPriceConsumer:
 
         try:
             while True:
-                msg = self.consumer.poll(1.0)  # Attente max 1s
+                msg = self.consumer.poll(1.0)
                 if msg is None:
                     continue
                 if msg.error():
@@ -65,8 +76,6 @@ class CryptoPriceConsumer:
                 value = json.loads(msg.value().decode('utf-8'))
 
                 self.logger.info(f"📨 [{message_count}] Received {key}")
-
-                # Traiter le message
                 self.process_ticker(value)
 
         except KeyboardInterrupt:
@@ -77,12 +86,7 @@ class CryptoPriceConsumer:
             self.close()
 
     def process_ticker(self, ticker: dict):
-        """
-        Traiter un ticker reçu
-        1. Stocker dans TimescaleDB
-        2. Cacher dans Redis
-        3. Publier sur Redis Pub/Sub
-        """
+        """Traiter un ticker reçu : TimescaleDB + Redis + Pub/Sub"""
         try:
             symbol = ticker['symbol']
             price = ticker['last']
@@ -118,8 +122,11 @@ class CryptoPriceConsumer:
 class ArbitrageAlertConsumer:
     """Consumer spécialisé pour les alertes d'arbitrage"""
 
-    def __init__(self, kafka_bootstrap_servers='localhost:9093'):
+    def __init__(self, kafka_bootstrap_servers=None):
         self.logger = logger.bind(component="arbitrage_consumer")
+
+        if kafka_bootstrap_servers is None:
+            kafka_bootstrap_servers = KAFKA_BOOTSTRAP
 
         conf = {
             'bootstrap.servers': kafka_bootstrap_servers,
@@ -131,7 +138,7 @@ class ArbitrageAlertConsumer:
         self.consumer.subscribe(['arbitrage-alerts'])
 
         self.timescale_loader = TimescaleLoader()
-        self.redis_loader = RedisLoader()
+        self.redis_loader = RedisLoader(host=REDIS_HOST, port=REDIS_PORT)
 
         self.logger.info("✅ Arbitrage Alert Consumer initialized")
 
@@ -154,11 +161,9 @@ class ArbitrageAlertConsumer:
                     f"{opportunity['spread_percent']:.2f}% spread"
                 )
 
-                # Stocker et cacher
                 self.timescale_loader.insert_arbitrage_opportunity(opportunity)
                 self.redis_loader.set_arbitrage_alert(opportunity, ttl=300)
 
-                # Notification
                 self.send_notification(opportunity)
 
         except KeyboardInterrupt:
@@ -189,8 +194,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.type == 'prices':
-        consumer = CryptoPriceConsumer(kafka_bootstrap_servers='localhost:9093')
+        consumer = CryptoPriceConsumer()
         consumer.consume_prices()
     else:
-        consumer = ArbitrageAlertConsumer(kafka_bootstrap_servers='localhost:9093')
+        consumer = ArbitrageAlertConsumer()
         consumer.consume_alerts()

@@ -73,30 +73,30 @@ services:
 
   # Dashboard Streamlit
   streamlit:
-      build:
-        context: .
-        dockerfile: Dockerfile.streamlit
-      container_name: crypto_streamlit
-      working_dir: /app
-      ports:
-        - "8501:8501"
-      depends_on:
-        timescaledb:
-          condition: service_healthy
-        redis:
-          condition: service_started
-      environment:
-        TIMESCALE_DB_HOST: timescaledb
-        TIMESCALE_DB_PORT: 5432
-        TIMESCALE_DB_USER: crypto_user
-        TIMESCALE_DB_PASSWORD: crypto_pass
-        TIMESCALE_DB_NAME: crypto_db
-        REDIS_HOST: redis
-        REDIS_PORT: 6379
-      networks:
-        - crypto_tracker_network
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: crypto_streamlit
+    working_dir: /app
+    ports:
+      - "8501:8501"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      TIMESCALE_DB_HOST: timescaledb
+      TIMESCALE_DB_PORT: 5432
+      TIMESCALE_DB_USER: crypto_user
+      TIMESCALE_DB_PASSWORD: crypto_pass
+      TIMESCALE_DB_NAME: crypto_db
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    networks:
+      - crypto_tracker_network
 
-  # Zookeeper (requis par Kafka pour coordination)
+  # Zookeeper (requis par Kafka)
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     container_name: crypto_zookeeper
@@ -123,27 +123,21 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      
-      # Listeners pour connexions internes et externes
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      
-      # Configuration de performance
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
-      
-      # Logs
-      KAFKA_LOG_RETENTION_HOURS: 168  # 7 jours
-      KAFKA_LOG_SEGMENT_BYTES: 1073741824  # 1GB
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
     networks:
       - crypto_tracker_network
     volumes:
       - kafka_data:/var/lib/kafka/data
 
-  # Kafka UI (interface web pour monitoring)
+  # Kafka UI
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: crypto_kafka_ui
@@ -158,6 +152,74 @@ services:
     networks:
       - crypto_tracker_network
 
+  # ============================================================
+  # SPARK SERVICES
+  # ============================================================
+
+  # Spark Master
+  spark-master:
+    image: apache/spark:4.0.1
+    container_name: crypto_spark_master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    ports:
+      - "8081:8080"
+      - "7077:7077"
+    networks:
+      - crypto_tracker_network
+    volumes:
+      - ./scripts:/opt/scripts
+      - spark_data:/opt/spark-data
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+
+
+
+
+  # Spark Worker 1
+  spark-worker-1:
+    image: apache/spark:4.0.1
+    container_name: crypto_spark_worker_1
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+    depends_on:
+      - spark-master
+    networks:
+      - crypto_tracker_network
+    volumes:
+      - ./scripts:/opt/scripts
+      - spark_data:/opt/spark-data
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+
+
+
+  # Spark Worker 2
+  spark-worker-2:
+    image: apache/spark:4.0.1
+    container_name: crypto_spark_worker_2
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+    depends_on:
+      - spark-master
+    networks:
+      - crypto_tracker_network
+    volumes:
+      - ./scripts:/opt/scripts
+      - spark_data:/opt/spark-data
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
 
 volumes:
   timescale_data:
@@ -165,7 +227,7 @@ volumes:
   zookeeper_data:
   zookeeper_logs:
   kafka_data:
+  spark_data:
 
 networks:
   crypto_tracker_network:
-  driver: null

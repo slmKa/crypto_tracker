@@ -8,15 +8,12 @@ import pandas as pd
 from loguru import logger
 from contextlib import contextmanager
 from datetime import datetime, timedelta
-from urllib.parse import quote_plus
 from dotenv import load_dotenv
 import os
-
 
 class TimescaleLoader:
     """
     Gestionnaire de connexion et insertion dans TimescaleDB
-    
     TimescaleDB = Extension PostgreSQL pour séries temporelles
     """
 
@@ -24,18 +21,12 @@ class TimescaleLoader:
         # Charger le .env
         load_dotenv()
 
-        # Lire et encoder les identifiants pour éviter UnicodeDecodeError
-        self.host = os.getenv("PG_HOST", "timescaledb")
-        self.port = int(os.getenv("PG_PORT", 5432))
-        self.database = os.getenv("PG_DATABASE", "crypto_db")
-        self.user = os.getenv("PG_USER", "crypto_user")
-        
-        # ⚡ Encoder uniquement le mot de passe spécial pour psycopg2
-        raw_password = os.getenv("PG_PASSWORD", "crypto_pass")
-        self.password = quote_plus(raw_password) if raw_password else None
-
-        # Chaîne de connexion PostgreSQL
-        self.conn_str = f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}"
+        # Paramètres DB
+        self.host = os.getenv("TIMESCALE_DB_HOST", "timescaledb")
+        self.port = int(os.getenv("TIMESCALE_DB_PORT", 5432))
+        self.database = os.getenv("TIMESCALE_DB_NAME", "crypto_db")
+        self.user = os.getenv("TIMESCALE_DB_USER", "crypto_user")
+        self.password = os.getenv("TIMESCALE_DB_PASSWORD", "crypto_pass")
 
         self.logger = logger.bind(component="timescale_loader")
 
@@ -44,21 +35,24 @@ class TimescaleLoader:
 
     @contextmanager
     def get_connection(self):
+        """
+        Connexion sécurisée à TimescaleDB
+        """
+        conn = None
         try:
-            # 🧹 Nettoyer la chaîne de connexion (supprime caractères invalides)
-            conn_str_clean = self.conn_str.encode('latin1', errors='ignore').decode('utf-8', errors='ignore')
-            print("DEBUG: Connexion string brute:", repr(conn_str_clean))
-            # 🪄 Debug : affiche la chaîne nettoyée
-            print("🧩 Connexion string nettoyée :", conn_str_clean)
-            
-            # Connexion à TimescaleDB
-            conn = psycopg2.connect(conn_str_clean)
+            conn = psycopg2.connect(
+                host=self.host,
+                port=self.port,
+                database=self.database,
+                user=self.user,
+                password=self.password
+            )
             yield conn
         except Exception as e:
-            logger.error(f"Erreur connexion : {e}")
+            self.logger.error(f"Erreur connexion : {e}")
             raise
         finally:
-            if 'conn' in locals():
+            if conn:
                 conn.close()
 
     # ----------------- Insertion OHLCV -----------------
@@ -208,7 +202,7 @@ class TimescaleLoader:
             cursor = conn.cursor()
             cursor.execute("CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;")
 
-            # Table : tickers
+            # Table tickers
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS tickers (
                     time TIMESTAMPTZ NOT NULL,
@@ -232,7 +226,7 @@ class TimescaleLoader:
             except Exception as e:
                 self.logger.warning(f"Hypertable tickers existe déjà : {e}")
 
-            # Table : ohlcv
+            # Table ohlcv
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS ohlcv (
                     time TIMESTAMPTZ NOT NULL,
@@ -244,17 +238,7 @@ class TimescaleLoader:
                     low DOUBLE PRECISION,
                     close DOUBLE PRECISION,
                     volume DOUBLE PRECISION,
-                    sma_20 DOUBLE PRECISION,
-                    sma_50 DOUBLE PRECISION,
-                    ema_12 DOUBLE PRECISION,
-                    ema_26 DOUBLE PRECISION,
                     rsi_14 DOUBLE PRECISION,
-                    macd DOUBLE PRECISION,
-                    macd_signal DOUBLE PRECISION,
-                    macd_histogram DOUBLE PRECISION,
-                    bb_upper DOUBLE PRECISION,
-                    bb_middle DOUBLE PRECISION,
-                    bb_lower DOUBLE PRECISION,
                     signal TEXT,
                     signal_strength DOUBLE PRECISION
                 );
@@ -264,7 +248,7 @@ class TimescaleLoader:
             except Exception as e:
                 self.logger.warning(f"Hypertable ohlcv existe déjà : {e}")
 
-            # Table : arbitrage_opportunities
+            # Table arbitrage_opportunities
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS arbitrage_opportunities (
                     time TIMESTAMPTZ NOT NULL,
@@ -282,51 +266,5 @@ class TimescaleLoader:
             except Exception as e:
                 self.logger.warning(f"Hypertable arbitrage existe déjà : {e}")
 
-            # Indexes
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tickers_symbol_time ON tickers (symbol, time DESC);")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol_timeframe ON ohlcv (symbol, timeframe, time DESC);")
-
             conn.commit()
             self.logger.info("✅ Tables créées avec succès")
-
-    # ----------------- Continuous aggregates & retention -----------------
-    def setup_continuous_aggregates(self):
-        self.insert_tickers_batch([
-            {"timestamp": int(datetime.utcnow().timestamp() * 1000), "exchange":"binance","symbol":"BTC/USDT","last":100,"bid":99,"ask":101,"volume_24h":10},
-            {"timestamp": int((datetime.utcnow() - timedelta(hours=1)).timestamp() * 1000), "exchange":"binance","symbol":"BTC/USDT","last":101,"bid":100,"ask":102,"volume_24h":10}
-        ])
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                CREATE MATERIALIZED VIEW IF NOT EXISTS hourly_avg_prices
-                WITH (timescaledb.continuous) AS
-                SELECT 
-                    time_bucket('1 hour', time) AS hour,
-                    symbol,
-                    exchange,
-                    AVG(last) as avg_price,
-                    MAX(last) as high_price,
-                    MIN(last) as low_price,
-                    COUNT(*) as tick_count
-                FROM tickers
-                GROUP BY hour, symbol, exchange
-                WITH NO DATA;
-            """)
-            cursor.execute("""
-                SELECT add_continuous_aggregate_policy('hourly_avg_prices',
-                    start_offset => INTERVAL '2 hours',
-                    end_offset   => INTERVAL '0 hours',
-                    schedule_interval => INTERVAL '15 minutes',
-                    if_not_exists => TRUE
-                );
-            """)
-            conn.commit()
-            self.logger.info("✅ Continuous aggregates configurés (horaire)")
-
-    def setup_retention_policy(self, table: str, retention_days: int = 30):
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(f"SELECT remove_retention_policy('{table}', if_exists => true);")
-            cursor.execute(f"SELECT add_retention_policy('{table}', INTERVAL '{retention_days} days', if_not_exists => TRUE);")
-            conn.commit()
-            self.logger.info(f"✅ Retention policy : {table} → {retention_days} jours")

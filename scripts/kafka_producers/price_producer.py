@@ -27,7 +27,7 @@ class CryptoPriceProducer:
     3. Publier sur Kafka topic 'crypto-prices'
     """
 
-    def __init__(self, kafka_bootstrap_servers='localhost:9093'):
+    def __init__(self, kafka_bootstrap_servers='localhost:9092'):
         """
         Initialiser le producer Kafka (Confluent client)
         Args:
@@ -171,7 +171,7 @@ if __name__ == "__main__":
     ]
 
     # Initialiser le producer
-    producer = CryptoPriceProducer(kafka_bootstrap_servers='localhost:9093')
+    producer = CryptoPriceProducer(kafka_bootstrap_servers='localhost:9092')
 
     try:
         # Mode 1 : Publier une fois (batch unique)
