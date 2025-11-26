@@ -370,3 +370,428 @@ def plot_volume_distribution(df: pd.DataFrame) -> go.Figure:
     )
     
     return fig
+
+def plot_stochastic_oscillator(df: pd.DataFrame, symbol: str) -> go.Figure:
+    """Graphique Stochastic Oscillator"""
+    fig = go.Figure()
+    
+    if 'stoch_k' in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df['stoch_k'],
+            mode='lines', name='%K',
+            line=dict(color='#00D9FF', width=2)
+        ))
+    
+    if 'stoch_d' in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df['stoch_d'],
+            mode='lines', name='%D',
+            line=dict(color='#FF006E', width=2)
+        ))
+    
+    fig.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="Overbought")
+    fig.add_hline(y=20, line_dash="dash", line_color="green", annotation_text="Oversold")
+    
+    fig.update_layout(
+        title=f"{symbol} - Stochastic Oscillator",
+        template='plotly_dark', height=400,
+        hovermode='x unified'
+    )
+    return fig
+
+def plot_atr(df: pd.DataFrame, symbol: str) -> go.Figure:
+    """Graphique Average True Range"""
+    fig = go.Figure()
+    
+    if 'atr' in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df['atr'],
+            mode='lines', name='ATR',
+            line=dict(color='#00D9FF', width=2),
+            fill='tozeroy', fillcolor='rgba(0, 217, 255, 0.1)'
+        ))
+    
+    fig.update_layout(
+        title=f"{symbol} - Average True Range (Volatility)",
+        template='plotly_dark', height=400,
+        hovermode='x unified'
+    )
+    return fig
+
+def plot_adx(df: pd.DataFrame, symbol: str) -> go.Figure:
+    """Graphique Average Directional Index"""
+    fig = go.Figure()
+    
+    if 'adx' in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df['adx'],
+            mode='lines', name='ADX',
+            line=dict(color='#00D9FF', width=2)
+        ))
+    
+    fig.add_hline(y=25, line_dash="dash", line_color="orange", annotation_text="Trend Strength")
+    
+    fig.update_layout(
+        title=f"{symbol} - Average Directional Index (Trend Strength)",
+        template='plotly_dark', height=400,
+        hovermode='x unified'
+    )
+    return fig
+
+def plot_support_resistance(df: pd.DataFrame, symbol: str) -> go.Figure:
+    """Graphique avec support/resistance et pivot points"""
+    fig = go.Figure()
+    
+    # Prix
+    fig.add_trace(go.Scatter(
+        x=df.index, y=df['close'],
+        mode='lines', name='Close Price',
+        line=dict(color='white', width=2)
+    ))
+    
+    # Support/Resistance
+    if 'resistance' in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df['resistance'],
+            mode='lines', name='Resistance',
+            line=dict(color='red', width=1, dash='dash')
+        ))
+    
+    if 'support' in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df['support'],
+            mode='lines', name='Support',
+            line=dict(color='green', width=1, dash='dash')
+        ))
+    
+    # Pivot Points
+    if 'pivot' in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df['pivot'],
+            mode='lines', name='Pivot',
+            line=dict(color='yellow', width=1, dash='dot')
+        ))
+    
+    fig.update_layout(
+        title=f"{symbol} - Support/Resistance & Pivot Points",
+        template='plotly_dark', height=400,
+        hovermode='x unified'
+    )
+    return fig
+
+def plot_backtest_results(trades: list, symbol: str) -> go.Figure:
+    """Graphique des résultats du backtest"""
+    if not trades:
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No trades executed",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5, showarrow=False,
+            font=dict(size=20, color="gray")
+        )
+        fig.update_layout(template='plotly_dark', height=400)
+        return fig
+    
+    import pandas as pd
+    trades_df = pd.DataFrame(trades)
+    
+    fig = go.Figure()
+    
+    # Trades gagnants
+    winning_trades = trades_df[trades_df['pnl_pct'] > 0]
+    fig.add_trace(go.Bar(
+        x=winning_trades['timestamp'],
+        y=winning_trades['pnl_pct'],
+        name='Winning Trades',
+        marker_color='green'
+    ))
+    
+    # Trades perdants
+    losing_trades = trades_df[trades_df['pnl_pct'] <= 0]
+    fig.add_trace(go.Bar(
+        x=losing_trades['timestamp'],
+        y=losing_trades['pnl_pct'],
+        name='Losing Trades',
+        marker_color='red'
+    ))
+    
+    fig.update_layout(
+        title=f"{symbol} - Backtest Results",
+        xaxis_title="Trade Date",
+        yaxis_title="P&L %",
+        template='plotly_dark',
+        height=400,
+        hovermode='x unified'
+    )
+    return fig
+
+# ============================================================
+# 🔹 ARBITRAGE VISUALIZATIONS
+# ============================================================
+
+def plot_spread_distribution(opportunities: pd.DataFrame) -> go.Figure:
+    """
+    Distribution des spreads d'arbitrage
+    
+    Args:
+        opportunities: DataFrame avec les opportunités
+        
+    Returns:
+        Figure Plotly
+    """
+    if opportunities.empty:
+        return go.Figure().add_annotation(text="No data available")
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Histogram(
+        x=opportunities['spread_percent'],
+        nbinsx=30,
+        name='Spread Distribution',
+        marker_color='#00D9FF',
+        opacity=0.7
+    ))
+    
+    fig.update_layout(
+        title="Arbitrage Spread Distribution",
+        xaxis_title="Spread %",
+        yaxis_title="Frequency",
+        template='plotly_dark',
+        height=400,
+        hovermode='x unified'
+    )
+    
+    return fig
+
+def plot_spread_by_symbol(opportunities: pd.DataFrame) -> go.Figure:
+    """
+    Spreads par symbole
+    
+    Args:
+        opportunities: DataFrame avec les opportunités
+        
+    Returns:
+        Figure Plotly
+    """
+    if opportunities.empty:
+        return go.Figure().add_annotation(text="No data available")
+    
+    # Grouper par symbole
+    symbol_stats = opportunities.groupby('symbol').agg({
+        'spread_percent': ['mean', 'max', 'min', 'count']
+    }).reset_index()
+    
+    symbol_stats.columns = ['symbol', 'avg_spread', 'max_spread', 'min_spread', 'count']
+    symbol_stats = symbol_stats.sort_values('avg_spread', ascending=False).head(15)
+    
+    fig = go.Figure()
+    
+    # Moyenne
+    fig.add_trace(go.Bar(
+        x=symbol_stats['symbol'],
+        y=symbol_stats['avg_spread'],
+        name='Average Spread',
+        marker_color='#00D9FF'
+    ))
+    
+    # Max
+    fig.add_trace(go.Scatter(
+        x=symbol_stats['symbol'],
+        y=symbol_stats['max_spread'],
+        name='Max Spread',
+        mode='markers',
+        marker=dict(size=10, color='#FF006E')
+    ))
+    
+    fig.update_layout(
+        title="Average Spread by Symbol (Top 15)",
+        xaxis_title="Symbol",
+        yaxis_title="Spread %",
+        template='plotly_dark',
+        height=400,
+        hovermode='x unified'
+    )
+    
+    return fig
+
+def plot_spread_by_exchange_pair(opportunities: pd.DataFrame) -> go.Figure:
+    """
+    Spreads par paire d'exchanges
+    
+    Args:
+        opportunities: DataFrame avec les opportunités
+        
+    Returns:
+        Figure Plotly
+    """
+    if opportunities.empty:
+        return go.Figure().add_annotation(text="No data available")
+    
+    # Créer colonne pair
+    opportunities['pair'] = opportunities['buy_exchange'] + ' → ' + opportunities['sell_exchange']
+    
+    # Grouper par pair
+    pair_stats = opportunities.groupby('pair').agg({
+        'spread_percent': ['mean', 'count']
+    }).reset_index()
+    
+    pair_stats.columns = ['pair', 'avg_spread', 'count']
+    pair_stats = pair_stats.sort_values('avg_spread', ascending=False)
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Bar(
+        x=pair_stats['pair'],
+        y=pair_stats['avg_spread'],
+        text=pair_stats['count'],
+        textposition='auto',
+        name='Average Spread',
+        marker_color='#00D9FF'
+    ))
+    
+    fig.update_layout(
+        title="Average Spread by Exchange Pair",
+        xaxis_title="Exchange Pair",
+        yaxis_title="Spread %",
+        template='plotly_dark',
+        height=400,
+        hovermode='x unified'
+    )
+    
+    return fig
+
+def plot_opportunities_timeline(opportunities: pd.DataFrame) -> go.Figure:
+    """
+    Timeline des opportunités d'arbitrage
+    
+    Args:
+        opportunities: DataFrame avec les opportunités
+        
+    Returns:
+        Figure Plotly
+    """
+    if opportunities.empty:
+        return go.Figure().add_annotation(text="No data available")
+    
+    # Convertir timestamp
+    if 'timestamp' in opportunities.columns:
+        opportunities['time'] = pd.to_datetime(opportunities['timestamp'], unit='ms')
+    else:
+        opportunities['time'] = pd.to_datetime('now')
+    
+    # Grouper par heure
+    hourly = opportunities.set_index('time').resample('H').agg({
+        'spread_percent': ['mean', 'max', 'count']
+    }).reset_index()
+    
+    hourly.columns = ['time', 'avg_spread', 'max_spread', 'count']
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatter(
+        x=hourly['time'],
+        y=hourly['avg_spread'],
+        mode='lines+markers',
+        name='Average Spread',
+        line=dict(color='#00D9FF', width=2)
+    ))
+    
+    fig.add_trace(go.Scatter(
+        x=hourly['time'],
+        y=hourly['max_spread'],
+        mode='lines',
+        name='Max Spread',
+        line=dict(color='#FF006E', dash='dash')
+    ))
+    
+    fig.update_layout(
+        title="Arbitrage Opportunities Timeline",
+        xaxis_title="Time",
+        yaxis_title="Spread %",
+        template='plotly_dark',
+        height=400,
+        hovermode='x unified'
+    )
+    
+    return fig
+
+def plot_volume_vs_spread(opportunities: pd.DataFrame) -> go.Figure:
+    """
+    Corrélation entre volume et spread
+    
+    Args:
+        opportunities: DataFrame avec les opportunités
+        
+    Returns:
+        Figure Plotly
+    """
+    if opportunities.empty:
+        return go.Figure().add_annotation(text="No data available")
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatter(
+        x=opportunities['volume_24h'],
+        y=opportunities['spread_percent'],
+        mode='markers',
+        marker=dict(
+            size=8,
+            color=opportunities['spread_percent'],
+            colorscale='Viridis',
+            showscale=True,
+            colorbar=dict(title="Spread %")
+        ),
+        text=opportunities['symbol'],
+        hovertemplate='<b>%{text}</b><br>Volume: %{x:,.0f}<br>Spread: %{y:.2f}%<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title="Volume vs Spread Correlation",
+        xaxis_title="24h Volume (USD)",
+        yaxis_title="Spread %",
+        template='plotly_dark',
+        height=400,
+        hovermode='closest',
+        xaxis_type='log'
+    )
+    
+    return fig
+
+def plot_profitability_by_exchange(stats: dict) -> go.Figure:
+    """
+    Profitabilité par exchange
+    
+    Args:
+        stats: Dict avec statistiques par exchange
+        
+    Returns:
+        Figure Plotly
+    """
+    if not stats:
+        return go.Figure().add_annotation(text="No data available")
+    
+    exchanges = list(stats.keys())
+    avg_spreads = [stats[ex]['avg_spread'] for ex in exchanges]
+    counts = [stats[ex]['count'] for ex in exchanges]
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Bar(
+        x=exchanges,
+        y=avg_spreads,
+        text=counts,
+        textposition='auto',
+        name='Average Spread',
+        marker_color='#00D9FF'
+    ))
+    
+    fig.update_layout(
+        title="Average Spread by Exchange Pair",
+        xaxis_title="Exchange Pair",
+        yaxis_title="Average Spread %",
+        template='plotly_dark',
+        height=400,
+        hovermode='x unified'
+    )
+    
+    return fig

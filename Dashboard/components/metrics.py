@@ -220,3 +220,128 @@ def display_volume_stats(stats: dict):
             f"{high_vol_pct:.1f}%",
             help="% de périodes avec volume élevé (>1.5x moyenne)"
         )
+
+def display_arbitrage_opportunity_detailed(opportunity: dict, fees: dict = None):
+    """
+    Afficher détails complets d'une opportunité d'arbitrage
+    
+    Args:
+        opportunity: Dict avec détails de l'opportunité
+        fees: Dict avec détails des frais
+    """
+    spread = opportunity.get('spread_percent', 0)
+    buy_price = opportunity.get('buy_price', 0)
+    sell_price = opportunity.get('sell_price', 0)
+    
+    # Couleur selon importance du spread
+    if spread > 1.0:
+        alert_type = "error"  # Rouge
+    elif spread > 0.5:
+        alert_type = "warning"  # Jaune
+    else:
+        alert_type = "info"  # Bleu
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        spread_abs = opportunity.get('spread_absolute', 0)
+        st.metric(
+            "Spread",
+            f"{spread:.4f}%",
+            delta=f"${spread_abs:,.4f}" if spread_abs > 0 else "N/A",
+            delta_color="normal"
+        )
+    
+    with col2:
+        st.metric(
+            "Buy Price",
+            f"${buy_price:,.4f}" if buy_price > 0 else "N/A",
+            help=f"On {opportunity.get('buy_exchange', 'N/A')}"
+        )
+    
+    with col3:
+        st.metric(
+            "Sell Price",
+            f"${sell_price:,.4f}" if sell_price > 0 else "N/A",
+            help=f"On {opportunity.get('sell_exchange', 'N/A')}"
+        )
+    
+    # Afficher les frais si disponibles
+    if fees:
+        st.markdown("### 💰 Fee Breakdown")
+        fee_col1, fee_col2, fee_col3, fee_col4 = st.columns(4)
+        
+        with fee_col1:
+            buy_fee = fees.get('buy_fee', 0)
+            st.metric("Buy Fee", f"${buy_fee:,.2f}" if buy_fee >= 0 else "N/A")
+        with fee_col2:
+            sell_fee = fees.get('sell_fee', 0)
+            st.metric("Sell Fee", f"${sell_fee:,.2f}" if sell_fee >= 0 else "N/A")
+        with fee_col3:
+            withdrawal_fee = fees.get('withdrawal_fee', 0)
+            st.metric("Withdrawal Fee", f"${withdrawal_fee:,.2f}" if withdrawal_fee >= 0 else "N/A")
+        with fee_col4:
+            total_fees = fees.get('total_fees', 0)
+            total_pct = fees.get('total_fees_percent', 0)
+            st.metric(
+                "Total Fees", 
+                f"${total_fees:,.2f}" if total_fees >= 0 else "N/A", 
+                delta=f"{total_pct:.2f}%" if total_pct >= 0 else "N/A"
+            )
+
+def display_exchange_stats(stats: dict):
+    """
+    Afficher statistiques d'arbitrage par exchange
+    
+    Args:
+        stats: Dict avec statistiques par exchange
+    """
+    if not stats:
+        st.info("No exchange statistics available")
+        return
+    
+    st.markdown("### 📊 Exchange Pair Statistics")
+    
+    # Créer un DataFrame pour affichage
+    data = []
+    for pair, stat in stats.items():
+        data.append({
+            'Exchange Pair': pair,
+            'Opportunities': stat['count'],
+            'Avg Spread %': f"{stat['avg_spread']:.2f}%",
+            'Max Spread %': f"{stat['max_spread']:.2f}%",
+            'Min Spread %': f"{stat['min_spread']:.2f}%",
+            'Total Profit': f"${stat['total_profit']:,.2f}"
+        })
+    
+    df = pd.DataFrame(data)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+def display_symbol_stats(stats: dict):
+    """
+    Afficher statistiques d'arbitrage par symbole
+    
+    Args:
+        stats: Dict avec statistiques par symbole
+    """
+    if not stats:
+        st.info("No symbol statistics available")
+        return
+    
+    st.markdown("### 📈 Symbol Statistics")
+    
+    # Créer un DataFrame pour affichage
+    data = []
+    for symbol, stat in stats.items():
+        data.append({
+            'Symbol': symbol,
+            'Opportunities': stat['count'],
+            'Avg Spread %': f"{stat['avg_spread']:.2f}%",
+            'Max Spread %': f"{stat['max_spread']:.2f}%",
+            'Min Spread %': f"{stat['min_spread']:.2f}%",
+            'Exchanges': ', '.join(stat['exchanges']),
+            'Total Profit': f"${stat['total_profit']:,.2f}"
+        })
+    
+    df = pd.DataFrame(data)
+    st.dataframe(df, use_container_width=True, hide_index=True)

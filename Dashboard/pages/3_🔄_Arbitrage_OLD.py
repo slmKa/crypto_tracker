@@ -1,5 +1,5 @@
 """
-Page dédiée aux opportunités d'arbitrage - VERSION AMÉLIORÉE COMPLÈTE
+Page dédiée aux opportunités d'arbitrage - VERSION AMÉLIORÉE
 """
 import streamlit as st
 import sys
@@ -68,9 +68,9 @@ with st.sidebar:
             "Minimum Spread %",
             min_value=0.0,
             max_value=5.0,
-            value=0.01,
-            step=0.01,
-            help="Only show opportunities with spread above this threshold (Binance spreads are typically 0.01-0.05%)"
+            value=0.3,
+            step=0.1,
+            help="Only show opportunities with spread above this threshold"
         )
         
         # Filtre par profitabilité nette
@@ -159,38 +159,36 @@ st.markdown("Advanced real-time cross-exchange arbitrage analysis")
 
 # Charger les données
 with st.spinner("🔍 Scanning for arbitrage opportunities..."):
-    # Redis (temps réel) - PRIORITÉ 1
+    # Calcul en temps réel
+    realtime_opps = loader.calculate_arbitrage_opportunities(min_spread=min_spread)
+    
+    # Redis (temps réel)
     redis_opps = loader.get_top_arbitrage_redis(limit=20)
     
-    # TimescaleDB (historique) - PRIORITÉ 2
+    # TimescaleDB (historique)
     db_opps = loader.get_arbitrage_opportunities(hours=time_period)
-    
-    # Calcul en temps réel - PRIORITÉ 3 (fallback)
-    realtime_opps = []
-    if not redis_opps and (db_opps.empty if isinstance(db_opps, pd.DataFrame) else not db_opps):
-        realtime_opps = loader.calculate_arbitrage_opportunities(min_spread=min_spread)
 
 # Fusionner et filtrer
 all_opps = []
 
-# Ajouter opportunités Redis (priorité)
-for opp in redis_opps:
+# Ajouter opportunités temps réel
+for opp in realtime_opps:
     if opp.get('spread_percent', 0) >= min_spread and opp.get('volume_24h', 0) >= min_volume:
         all_opps.append(opp)
 
-# Ajouter opportunités DB (si pas déjà dans Redis)
+# Ajouter opportunités Redis
+for opp in redis_opps:
+    if opp.get('spread_percent', 0) >= min_spread and opp.get('volume_24h', 0) >= min_volume:
+        if not any(o['symbol'] == opp.get('symbol') for o in all_opps):
+            all_opps.append(opp)
+
+# Ajouter opportunités DB (si pas déjà présentes)
 if not db_opps.empty:
     for _, row in db_opps.iterrows():
         if row['spread_percent'] >= min_spread:
             opp_dict = row.to_dict()
-            if not any(o.get('symbol') == opp_dict.get('symbol') for o in all_opps):
+            if not any(o['symbol'] == opp_dict['symbol'] for o in all_opps):
                 all_opps.append(opp_dict)
-
-# Ajouter opportunités temps réel (fallback)
-for opp in realtime_opps:
-    if opp.get('spread_percent', 0) >= min_spread and opp.get('volume_24h', 0) >= min_volume:
-        if not any(o.get('symbol') == opp.get('symbol') for o in all_opps):
-            all_opps.append(opp)
 
 # Trier par spread décroissant
 all_opps = sorted(all_opps, key=lambda x: x.get('spread_percent', 0), reverse=True)
@@ -274,48 +272,40 @@ with col5:
 st.markdown("---")
 
 # ============================================================
-# SECTION 2 : TOP OPPORTUNITIES WITH DETAILED ANALYSIS
+# SECTION 2 : ACTIVE OPPORTUNITIES
 # ============================================================
 
+st.header("🚨 Active Opportunities")
+
 if all_opps:
-    st.header("🚨 Top Opportunities")
+    # Afficher les top opportunités
+    st.subheader(f"Top {min(10, len(all_opps))} Opportunities")
     
-    # Afficher les top 5 opportunités avec détails
-    for idx, opp in enumerate(all_opps[:5]):
-        with st.expander(f"#{idx+1} {opp.get('symbol', 'N/A')} - {opp.get('spread_percent', 0):.2f}% Spread", expanded=(idx==0)):
-            col1, col2 = st.columns([2, 1])
+    for opp in all_opps[:10]:
+        with st.container():
+            col1, col2 = st.columns([3, 1])
             
             with col1:
                 display_arbitrage_alert(opp)
             
             with col2:
-                # Calculer les frais pour cette opportunité
-                fees_calc = loader.calculate_total_fees(
-                    opp.get('buy_exchange', 'Binance'),
-                    opp.get('sell_exchange', 'Binance'),
-                    opp.get('symbol', 'BTC/USDT'),
-                    investment,
-                    maker_fee=maker_fee,
-                    taker_fee=taker_fee,
-                    withdrawal_fee=withdrawal_fee
-                )
+                st.markdown("### Profit Calculation")
                 
-                display_arbitrage_opportunity_detailed(opp, fees_calc)
+                spread = opp.get('spread_percent', 0)
+                gross = investment * (spread / 100)
+                fees = investment * (trading_fee / 100) * 2
+                net = gross - fees
                 
-                # Vérifier la liquidité
-                liquidity = loader.check_liquidity(
-                    opp.get('buy_exchange', 'Binance'),
-                    opp.get('symbol', 'BTC/USDT'),
-                    investment
-                )
+                st.metric("Gross Profit", f"${gross:,.2f}")
+                st.metric("Fees", f"${fees:,.2f}", delta=f"-{trading_fee*2:.2f}%")
+                st.metric("Net Profit", f"${net:,.2f}", 
+                         delta=f"{(net/investment)*100:+.2f}%",
+                         delta_color="normal" if net > 0 else "inverse")
                 
-                st.markdown("### 💧 Liquidity Check")
-                if liquidity['sufficient']:
-                    st.success(f"✅ {liquidity['message']}")
-                else:
-                    st.warning(f"⚠️ {liquidity['message']}")
-                
-                st.metric("Estimated Slippage", f"{liquidity['slippage_percent']:.2f}%")
+                # ROI
+                roi = (net / investment) * 100
+                st.progress(min(roi / 10, 1.0))  # Cap à 10% pour la barre
+                st.caption(f"ROI: {roi:.2f}%")
     
     st.markdown("---")
     
@@ -323,7 +313,7 @@ if all_opps:
     # SECTION 3 : DETAILED TABLE
     # ============================================================
     
-    st.header("📋 All Opportunities Table")
+    st.header("📋 Detailed Opportunity Table")
     
     # Convertir en DataFrame
     df_opps = pd.DataFrame(all_opps)
@@ -331,7 +321,7 @@ if all_opps:
     # Calculer colonnes additionnelles
     if not df_opps.empty:
         df_opps['gross_profit'] = investment * (df_opps['spread_percent'] / 100)
-        df_opps['fees'] = investment * (taker_fee / 100) + investment * (maker_fee / 100)
+        df_opps['fees'] = investment * (trading_fee / 100) * 2
         df_opps['net_profit'] = df_opps['gross_profit'] - df_opps['fees']
         df_opps['roi_percent'] = (df_opps['net_profit'] / investment) * 100
         
@@ -339,7 +329,7 @@ if all_opps:
         display_cols = [
             'symbol', 'buy_exchange', 'sell_exchange',
             'buy_price', 'sell_price', 'spread_percent',
-            'gross_profit', 'fees', 'net_profit', 'roi_percent', 'volume_24h'
+            'gross_profit', 'fees', 'net_profit', 'roi_percent'
         ]
         
         # S'assurer que toutes les colonnes existent
@@ -350,7 +340,7 @@ if all_opps:
         df_display.columns = [
             'Symbol', 'Buy Exchange', 'Sell Exchange',
             'Buy Price', 'Sell Price', 'Spread %',
-            'Gross Profit', 'Fees', 'Net Profit', 'ROI %', 'Volume 24h'
+            'Gross Profit', 'Fees', 'Net Profit', 'ROI %'
         ]
         
         # Formater les nombres
@@ -361,12 +351,14 @@ if all_opps:
             'Gross Profit': '${:,.2f}',
             'Fees': '${:,.2f}',
             'Net Profit': '${:,.2f}',
-            'ROI %': '{:+.2f}%',
-            'Volume 24h': '${:,.0f}'
+            'ROI %': '{:+.2f}%'
         }
         
-        # Appliquer le format (sans gradient car matplotlib non disponible)
-        styled_df = df_display.style.format(format_dict)
+        # Appliquer le style
+        styled_df = df_display.style.format(format_dict).background_gradient(
+            subset=['Spread %', 'ROI %'],
+            cmap='RdYlGn'
+        )
         
         st.dataframe(styled_df, use_container_width=True, height=400)
         
@@ -382,37 +374,7 @@ if all_opps:
     st.markdown("---")
     
     # ============================================================
-    # SECTION 4 : SPREAD ANALYSIS
-    # ============================================================
-    
-    if show_analysis:
-        st.header("📊 Spread Analysis")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            fig_dist = plot_spread_distribution(df_opps)
-            st.plotly_chart(fig_dist, use_container_width=True)
-        
-        with col2:
-            fig_symbol = plot_spread_by_symbol(df_opps)
-            st.plotly_chart(fig_symbol, use_container_width=True)
-        
-        col3, col4 = st.columns(2)
-        
-        with col3:
-            fig_pair = plot_spread_by_exchange_pair(df_opps)
-            st.plotly_chart(fig_pair, use_container_width=True)
-        
-        with col4:
-            if show_correlation:
-                fig_corr = plot_volume_vs_spread(df_opps)
-                st.plotly_chart(fig_corr, use_container_width=True)
-        
-        st.markdown("---")
-    
-    # ============================================================
-    # SECTION 5 : HEATMAP
+    # SECTION 4 : HEATMAP
     # ============================================================
     
     st.header("🔥 Arbitrage Heatmap")
@@ -434,59 +396,69 @@ if all_opps:
     st.markdown("---")
     
     # ============================================================
-    # SECTION 6 : STATISTICS
+    # SECTION 5 : HISTORICAL TRENDS
     # ============================================================
     
-    if show_stats:
-        st.header("📈 Statistics")
-        
-        # Stats par exchange
-        exchange_stats = loader.get_arbitrage_stats_by_exchange(hours=time_period)
-        display_exchange_stats(exchange_stats)
-        
-        st.markdown("---")
-        
-        # Stats par symbole
-        symbol_stats = loader.get_arbitrage_stats_by_symbol(hours=time_period)
-        display_symbol_stats(symbol_stats)
-        
-        st.markdown("---")
+    st.header("📈 Historical Trends")
     
-    # ============================================================
-    # SECTION 7 : HISTORICAL TRENDS
-    # ============================================================
-    
-    if show_timeline and not db_opps.empty:
-        st.header("📈 Historical Trends")
+    if not db_opps.empty:
+        import plotly.graph_objects as go
         
-        fig_timeline = plot_opportunities_timeline(db_opps)
-        st.plotly_chart(fig_timeline, use_container_width=True)
+        # Grouper par heure
+        db_opps['hour'] = pd.to_datetime(db_opps['time']).dt.floor('H')
+        hourly_avg = db_opps.groupby('hour')['spread_percent'].agg(['mean', 'max', 'count'])
+        
+        fig_trend = go.Figure()
+        
+        fig_trend.add_trace(go.Scatter(
+            x=hourly_avg.index,
+            y=hourly_avg['mean'],
+            mode='lines+markers',
+            name='Average Spread',
+            line=dict(color='#00D9FF', width=2)
+        ))
+        
+        fig_trend.add_trace(go.Scatter(
+            x=hourly_avg.index,
+            y=hourly_avg['max'],
+            mode='lines',
+            name='Max Spread',
+            line=dict(color='#FF006E', width=1, dash='dash')
+        ))
+        
+        fig_trend.update_layout(
+            title=f"Arbitrage Spread Trends (Last {time_period}h)",
+            xaxis_title="Time",
+            yaxis_title="Spread %",
+            template='plotly_dark',
+            height=400,
+            hovermode='x unified'
+        )
+        
+        st.plotly_chart(fig_trend, use_container_width=True)
         
         # Statistiques
         col1, col2, col3 = st.columns(3)
         
-        db_opps['hour'] = pd.to_datetime(db_opps['time']).dt.floor('H')
-        hourly_stats = db_opps.groupby('hour')['spread_percent'].agg(['mean', 'max', 'count'])
-        
         with col1:
             st.metric(
                 "Average Opportunities/Hour",
-                f"{hourly_stats['count'].mean():.1f}"
+                f"{hourly_avg['count'].mean():.1f}"
             )
         
         with col2:
             st.metric(
                 "Peak Hour",
-                hourly_stats['count'].idxmax().strftime("%H:%M") if not hourly_stats.empty else "N/A"
+                hourly_avg['count'].idxmax().strftime("%H:%M") if not hourly_avg.empty else "N/A"
             )
         
         with col3:
             st.metric(
                 "Best Spread Hour",
-                hourly_stats['max'].idxmax().strftime("%H:%M") if not hourly_stats.empty else "N/A"
+                hourly_avg['max'].idxmax().strftime("%H:%M") if not hourly_avg.empty else "N/A"
             )
-        
-        st.markdown("---")
+    else:
+        st.info("No historical data available for the selected period")
 
 else:
     # Aucune opportunité trouvée
@@ -495,71 +467,17 @@ else:
     st.markdown("""
     ### Why no opportunities?
     
-    **Important:** Arbitrage opportunities are typically found when comparing **multiple exchanges** (e.g., Binance vs Kraken vs Coinbase).
+    Possible reasons:
+    - Market is currently efficient (prices aligned across exchanges)
+    - Minimum spread threshold is too high (try lowering it)
+    - No recent data in the database (pipeline may need time to collect data)
+    - Exchanges have similar liquidity
     
-    Current situation:
-    - ✅ **Binance API** is connected and working
-    - ⚠️ **Redis** - Not storing arbitrage data yet (pipeline may need setup)
-    - ⚠️ **TimescaleDB** - Not storing historical arbitrage data yet
-    
-    ### What this means:
-    
-    1. **Single Exchange Analysis** - Currently analyzing only Binance bid/ask spreads
-    2. **Bid/Ask Spreads** - These are typically very small (0.01-0.05%) on Binance
-    3. **No Cross-Exchange Data** - To find real arbitrage, we need prices from multiple exchanges
-    
-    ### To see opportunities:
-    
-    **Option 1: Lower the threshold**
-    - Try setting "Minimum Spread %" to 0.001% to see Binance bid/ask spreads
-    
-    **Option 2: Set up data pipeline**
-    - Configure Redis to cache arbitrage opportunities
-    - Configure TimescaleDB to store historical data
-    - Set up workers to calculate cross-exchange spreads
-    
-    **Option 3: Add test data**
-    - Manually insert test arbitrage opportunities into Redis/TimescaleDB
-    
-    ### Data Sources Status:
+    **Tip:** Lower the minimum spread threshold in the sidebar to see smaller opportunities.
     """)
-    
-    # Vérifier les sources de données
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        try:
-            if loader.redis and loader.redis.connected:
-                st.success("✅ Redis: Connected")
-            else:
-                st.warning("⚠️ Redis: Not connected")
-        except:
-            st.error("❌ Redis: Error")
-    
-    with col2:
-        try:
-            if loader.timescale and loader.timescale.connected:
-                st.success("✅ TimescaleDB: Connected")
-            else:
-                st.warning("⚠️ TimescaleDB: Not connected")
-        except:
-            st.error("❌ TimescaleDB: Error")
-    
-    with col3:
-        try:
-            if loader.exchange:
-                ticker = loader.exchange.fetch_ticker('BTC/USDT')
-                if ticker:
-                    st.success("✅ Binance API: Connected")
-                else:
-                    st.warning("⚠️ Binance API: No response")
-            else:
-                st.error("❌ Binance API: Not connected")
-        except Exception as e:
-            st.error(f"❌ Binance API: Error - {str(e)[:50]}")
 
 # ============================================================
-# SECTION 8 : RISK WARNINGS
+# SECTION 6 : RISK WARNINGS
 # ============================================================
 
 st.markdown("---")
@@ -621,8 +539,7 @@ with st.expander("📖 Read Before Trading"):
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: gray;'>
-    <p>Arbitrage opportunities update every 5 minutes via Binance API</p>
+    <p>Arbitrage opportunities update every 5 minutes via Airflow pipeline</p>
     <p>⚠️ Past opportunities do not guarantee future profits</p>
-    <p>Last updated: {}</p>
 </div>
-""".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S")), unsafe_allow_html=True)
+""", unsafe_allow_html=True)
